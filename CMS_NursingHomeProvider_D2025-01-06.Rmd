@@ -1,0 +1,167 @@
+---
+title: "CMS Nursing Home Data Analysis"
+author: "Amanda Hattaway"
+output: 
+  html_document:
+    df_print: paged
+    code_folding: hide
+---
+## Overview
+
+This R Notebook analyzes CMS Nursing Home data, focusing on New England states and Massachusetts counties. We will explore the average nursing home ratings and visualize them across counties and states.
+
+**Note**: The county map is the main reason I chose R over Python for this study, as R provides easier tools for geographic data manipulation and visualization using packages like `tigris` and `sf`.
+
+## Setting Up
+
+```{r}
+suppressWarnings({
+
+library(httr)
+library(jsonlite)
+library(tidyverse)
+library(tigris)
+library(sf)
+library(curl)
+library(plotly)
+})
+
+```
+## Fetch CMS Provider Data 
+```{r}
+dataset_id <- "4pq5-n9py"
+url <- paste0("https://data.cms.gov/provider-data/api/1/metastore/schemas/dataset/items/", dataset_id)
+
+response <- GET(url)
+
+if (status_code(response) == 200) {
+  dataset_metadata <- content(response, "parsed")
+  download_url <- dataset_metadata$distribution[[1]]$downloadURL
+} else {
+  print(paste("Error fetching dataset metadata:", status_code(response)))
+  stop()
+}
+
+```
+### Loading and Cleaning the data
+```{r}
+
+df <- read.csv(download_url)
+
+df_clean <- df %>% filter(!is.na(State) & !is.na(`Overall.Rating`))
+
+```
+##Filtering New England
+The ratings (below) indicate that, on average, Rhode Island has the highest overall rating for nursing homes among the New England states, followed by Maine and New Hampshire. Massachusetts has the lowest average rating in this comparison.
+```{r}
+new_england_states <- c('ME', 'NH', 'VT', 'MA', 'RI', 'CT')
+df_new_england <- df_clean %>% filter(State %in% new_england_states)
+
+df_new_england_grouped <- df_new_england %>%
+  group_by(State) %>%
+  summarise(Average.Rating = mean(`Overall.Rating`, na.rm = TRUE)) %>%
+  arrange(desc(Average.Rating))
+
+
+print(df_new_england_grouped)
+```
+## Nursing Home Ratings by County in Massachusetts: Visualizing County-Level Ratings
+```{r}
+ma_counties <- invisible(tigris::counties(state = "MA", cb = TRUE))
+
+
+if (exists("ma_counties")) {
+  print("ma_counties has been loaded successfully.")
+} else {
+  stop("ma_counties could not be loaded. Please check the tigris package.")
+}
+
+
+df_ma_counties_summary <- df_clean %>% 
+  dplyr::filter(State == "MA") %>%
+  dplyr::group_by(County.Parish) %>%
+  dplyr::summarise(Average.Rating = mean(Overall.Rating, na.rm = TRUE))
+
+
+ma_counties_ratings <- left_join(ma_counties, df_ma_counties_summary, by = c("NAME" = "County.Parish"))
+
+
+map <- ggplot(ma_counties_ratings) +
+  geom_sf(aes(fill = Average.Rating, 
+              text = paste("County: ", NAME, "<br>Average Rating: ", round(Average.Rating, 2))), 
+          color = "white", size = 0.2) +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  labs(title = "Massachusetts County Ratings", fill = "Average Rating") +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        panel.grid = element_blank())
+
+
+interactive_map <- ggplotly(map, tooltip = "text")
+
+
+interactive_map
+```
+### Understanding MA County Ratings
+Based on the data, Dukes County has the highest overall rating, but it is important to note that it only has one facility. This means that the rating might be influenced by the performance of a single facility, so it might not reflect a broader trend across multiple facilities. It would be helpful to consider counties with more facilities for a more reliable comparison of the nursing home ratings in Massachusetts.
+```{r}
+df_ma_counties <- df_clean %>% filter(State == "MA")
+county_facility_count <- df_ma_counties %>%
+  group_by(County.Parish) %>%
+  summarise(Number_of_Facilities = n()) %>%
+  arrange(desc(Number_of_Facilities))
+
+print(county_facility_count)
+
+
+
+```
+## State-Level Ratings: Top-Ranking Areas for Nursing Home Ratings
+The following plot displays the top-ranking states/territories for nursing home ratings. Hawaii (HI), Puerto Rico (PR), and Alaska (AK) lead the way, while Georgia (GA), Louisiana (LA), and Guam (GU) have the lowest ratings.
+```{r}
+df_state_avg <- df_clean %>%
+  group_by(State) %>%
+  summarise(Average.Rating = mean(`Overall.Rating`, na.rm = TRUE))
+plot <- ggplot(df_state_avg, aes(x = reorder(State, -Average.Rating), y = Average.Rating, text = paste("State:", State, "<br>Rating:", round(Average.Rating, 2)))) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(
+    title = "Top-Ranking Areas for Nursing Home Ratings", 
+    subtitle = "",
+    x = "State/Territory", 
+    y = "Average Overall Rating",
+    caption = "Source: CMS"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    plot.margin = margin(t = 20, b = 40, r = 30, l = 30),  
+    plot.title = element_text(hjust = 0.5, size = 16), 
+    plot.subtitle = element_text(hjust = 0.5, face = "italic", size = 12),  
+    plot.caption = element_text(hjust = 0.5, size = 8, face = "italic"), 
+    plot.title.position = "plot" 
+      
+)
+
+interactive_plot <- ggplotly(plot, tooltip = "text")
+
+
+interactive_plot
+```
+
+## Remarks
+However, there are several areas for future work that could enhance our understanding of the factors driving these ratings:
+
+Staffing Analysis 🧑: Investigating the relationship between staffing levels (e.g., Reported.Nurse.Aide.Staffing.Hours.per.Resident.per.Day, Reported.RN.Staffing.Hours.per.Resident.per.Day, Total.number.of.nurse.staff.hours.per.resident.per.day.on.the.weekend) and the overall rating (Overall.Rating) could help identify how staffing impacts care quality.
+
+Health Inspections 🔍: Exploring how health inspection ratings (Health.Inspection.Rating) correlate with nursing home ratings (Overall.Rating). A deeper dive into Most.Recent.Health.Inspection.More.Than.2.Years.Ago might provide insights into the influence of recent inspections on ratings.
+
+Ownership Type: Analyzing how ownership type (Ownership.Type) affects nursing home ratings. A comparison of for-profit and non-profit facilities' ratings could uncover patterns in care quality based on facility ownership.
+
+Facility Size 🏠: Investigating the relationship between the number of certified beds (Number.of.Certified.Beds) and nursing home ratings (Overall.Rating). Larger facilities may have different challenges compared to smaller ones.
+
+Health Deficiencies: Analyzing the impact of health deficiencies (Rating.Cycle.1.Number.of.Standard.Health.Deficiencies, Rating.Cycle.2.Number.of.Standard.Health.Deficiencies) on overall ratings (Overall.Rating) to understand how deficiencies contribute to lower ratings.
+
+Staffing Turnover 📉: Investigating staffing turnover (Total.nursing.staff.turnover, Registered.Nurse.turnover) and its correlation with the nursing home ratings could offer insights into how retention issues affect care quality.
+
+
+
