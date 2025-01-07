@@ -51,7 +51,7 @@ df <- read.csv(download_url)
 df_clean <- df %>% filter(!is.na(State) & !is.na(`Overall.Rating`))
 
 ```
-##Filtering New England
+## Filtering New England
 The ratings (below) indicate that, on average, Rhode Island has the highest overall rating for nursing homes among the New England states, followed by Maine and New Hampshire. Massachusetts has the lowest average rating in this comparison.
 ```{r}
 new_england_states <- c('ME', 'NH', 'VT', 'MA', 'RI', 'CT')
